@@ -1,7 +1,7 @@
 Package: parglm
 Type: Package
 Title: Parallel GLM
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: c(
   person("Benjamin", "Christoffersen", 
          email = "boennecd@gmail.com", 
@@ -20,13 +20,13 @@ Imports: Rcpp, Matrix
 SystemRequirements: C++11
 Suggests: testthat, SuppDists, knitr, rmarkdown, speedglm,
         microbenchmark, R.rsp
-RoxygenNote: 6.0.1
+RoxygenNote: 6.1.1
 VignetteBuilder: R.rsp
 NeedsCompilation: yes
-Packaged: 2018-11-30 23:35:28 UTC; User
+Packaged: 2019-01-19 12:40:34 UTC; boennecd
 Author: Benjamin Christoffersen [cre, aut],
   Anthony Williams [cph],
   Boost developers [cph]
 Maintainer: Benjamin Christoffersen <boennecd@gmail.com>
 Repository: CRAN
-Date/Publication: 2018-12-09 14:10:02 UTC
+Date/Publication: 2019-01-19 13:10:02 UTC
