@@ -1,3 +1,11 @@
+# pargm 0.1.4
+* `stop`s when there are more variables than observations. Previously, this 
+  caused a crash.
+* handle Fortran string length argument.
+
+# pargm 0.1.3
+* Fix bug found with Valgrind.
+
 # pargm 0.1.2
 * Minor changes in implementation.
 * Fix bugs in patched R and oldrel R.
