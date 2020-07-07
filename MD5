@@ -1,10 +1,10 @@
-08e7846caa0cce1d1945a193d52febce *DESCRIPTION
+c0ed03a490db11cfc2387849f175dc5d *DESCRIPTION
 83f007aa5c845ab55c75f4442240eadf *NAMESPACE
 eccbd8d8c252110ecb6d4d92d418b181 *NEWS.md
 7533026b42dfd2a867c4717fc5f4a4ba *R/RcppExports.R
 0dd10771d479ac67e6c6ea5d0a8e74bf *R/parglm.R
 9a6b6fc3360a76fd051f861f691858bc *README.md
-62c85361fc13d4f414885f700366f439 *build/vignette.rds
+959efa78498d35b7f33b7169ff575f62 *build/vignette.rds
 6bf746209734df2ca0234666e42746f6 *inst/doc/parglm.html
 9a7fba7288689206f2e674cc9c10fd3f *inst/doc/parglm.html.asis
 3923fb8631310b053b46177a23279eba *man/parglm.Rd
@@ -26,5 +26,5 @@ f26b35090780ea66a2d3fdee039ffcc6 *src/thread_pool.h
 4cda31bc676f00083a09f198c5b01483 *tests/testthat.R
 d50dd77b246f53c59a6268758f4d295d *tests/testthat/test_internal.R
 de3b46d76d824bb17ccda99ad0bda4d4 *tests/testthat/test_misc.R
-f4d710a9c49dd85d88242ae4b8253e7c *tests/testthat/test_parglm_fams.R
+83e7317276c8ad758d72ac5e9c05b9cd *tests/testthat/test_parglm_fams.R
 9a7fba7288689206f2e674cc9c10fd3f *vignettes/parglm.html.asis
