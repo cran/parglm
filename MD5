@@ -1,4 +1,4 @@
-c0ed03a490db11cfc2387849f175dc5d *DESCRIPTION
+9e6b415c81f373b59f86c99550741a23 *DESCRIPTION
 83f007aa5c845ab55c75f4442240eadf *NAMESPACE
 eccbd8d8c252110ecb6d4d92d418b181 *NEWS.md
 7533026b42dfd2a867c4717fc5f4a4ba *R/RcppExports.R
@@ -26,5 +26,5 @@ f26b35090780ea66a2d3fdee039ffcc6 *src/thread_pool.h
 4cda31bc676f00083a09f198c5b01483 *tests/testthat.R
 d50dd77b246f53c59a6268758f4d295d *tests/testthat/test_internal.R
 de3b46d76d824bb17ccda99ad0bda4d4 *tests/testthat/test_misc.R
-83e7317276c8ad758d72ac5e9c05b9cd *tests/testthat/test_parglm_fams.R
+6e3397fb078a1346a793aa5d051031d5 *tests/testthat/test_parglm_fams.R
 9a7fba7288689206f2e674cc9c10fd3f *vignettes/parglm.html.asis
