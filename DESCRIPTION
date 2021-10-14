@@ -1,11 +1,12 @@
 Package: parglm
 Type: Package
 Title: Parallel GLM
-Version: 0.1.6
+Version: 0.1.7
 Authors@R: c(
   person("Benjamin", "Christoffersen", 
          email = "boennecd@gmail.com", 
-         role = c("cre", "aut")), 
+         role = c("cre", "aut"), 
+         comment = c(ORCID = "0000-0002-7182-1346")), 
   person("Anthony", "Williams", 
          role = c("cph")),
   person("Boost developers", 
@@ -14,7 +15,8 @@ Description: Provides a parallel estimation method for generalized
   linear models without compiling with a multithreaded LAPACK or BLAS.
 License: GPL-2
 Encoding: UTF-8
-LazyData: true
+URL: https://github.com/boennecd/parglm
+BugReports: https://github.com/boennecd/parglm/issues
 LinkingTo: Rcpp, RcppArmadillo
 Imports: Rcpp, Matrix
 SystemRequirements: C++11
@@ -23,10 +25,11 @@ Suggests: testthat, SuppDists, knitr, rmarkdown, speedglm,
 RoxygenNote: 6.1.1
 VignetteBuilder: R.rsp
 NeedsCompilation: yes
-Packaged: 2020-08-06 12:04:03 UTC; boennecd
-Author: Benjamin Christoffersen [cre, aut],
+Packaged: 2021-10-14 14:55:16 UTC; boennecd
+Author: Benjamin Christoffersen [cre, aut]
+    (<https://orcid.org/0000-0002-7182-1346>),
   Anthony Williams [cph],
   Boost developers [cph]
 Maintainer: Benjamin Christoffersen <boennecd@gmail.com>
 Repository: CRAN
-Date/Publication: 2020-08-10 17:10:10 UTC
+Date/Publication: 2021-10-14 15:10:02 UTC
