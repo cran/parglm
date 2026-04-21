@@ -1,6 +1,13 @@
+# parglm 0.1.8
+* Remove specification of C++11
+* Amend `std::result_of` to `std::invoke_result` in a header file
+* Fix infinite recursion in `QR_base::qyt` by removing `std::move`
+* Require C++17 on Linux, macOS, and Windows
+* New maintainer - Tom Palmer
+
 # parglm 0.1.7
 * Avoid some virtual function calls and remove a few macros. 
-* Fix an issue due to the new STRICT_R_HEADERS variable in Rcpp.
+* Fix an issue due to the new `STRICT_R_HEADERS` variable in Rcpp.
 
 # parglm 0.1.6
 * Avoid some memory allocations.

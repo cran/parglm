@@ -1,35 +1,34 @@
 Package: parglm
-Type: Package
 Title: Parallel GLM
-Version: 0.1.7
+Version: 0.1.8
 Authors@R: c(
-  person("Benjamin", "Christoffersen", 
-         email = "boennecd@gmail.com", 
-         role = c("cre", "aut"), 
-         comment = c(ORCID = "0000-0002-7182-1346")), 
-  person("Anthony", "Williams", 
-         role = c("cph")),
-  person("Boost developers", 
-         role = c("cph")))
-Description: Provides a parallel estimation method for generalized 
-  linear models without compiling with a multithreaded LAPACK or BLAS.
+    person("Benjamin", "Christoffersen", , "boennecd@gmail.com", role = "aut",
+           comment = c(ORCID = "0000-0002-7182-1346")),
+    person("Anthony", "Williams", role = "cph"),
+    person("Boost developers", role = "cph"),
+    person("Tom", "Palmer", , "remlapmot@hotmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0003-4655-4511"))
+  )
+Description: Provides a parallel estimation method for generalized linear
+    models without compiling with a multithreaded LAPACK or BLAS.
 License: GPL-2
-Encoding: UTF-8
-URL: https://github.com/boennecd/parglm
-BugReports: https://github.com/boennecd/parglm/issues
+URL: https://github.com/remlapmot/parglm,
+        https://remlapmot.github.io/parglm/
+BugReports: https://github.com/remlapmot/parglm/issues
+Imports: Matrix, Rcpp
+Suggests: knitr, microbenchmark, R.rsp, rmarkdown, speedglm, SuppDists,
+        testthat
 LinkingTo: Rcpp, RcppArmadillo
-Imports: Rcpp, Matrix
-SystemRequirements: C++11
-Suggests: testthat, SuppDists, knitr, rmarkdown, speedglm,
-        microbenchmark, R.rsp
-RoxygenNote: 6.1.1
 VignetteBuilder: R.rsp
+Encoding: UTF-8
+RoxygenNote: 7.3.3
 NeedsCompilation: yes
-Packaged: 2021-10-14 14:55:16 UTC; boennecd
-Author: Benjamin Christoffersen [cre, aut]
-    (<https://orcid.org/0000-0002-7182-1346>),
+Packaged: 2026-04-19 03:16:00 UTC; tom
+Author: Benjamin Christoffersen [aut] (ORCID:
+    <https://orcid.org/0000-0002-7182-1346>),
   Anthony Williams [cph],
-  Boost developers [cph]
-Maintainer: Benjamin Christoffersen <boennecd@gmail.com>
+  Boost developers [cph],
+  Tom Palmer [aut, cre] (ORCID: <https://orcid.org/0000-0003-4655-4511>)
+Maintainer: Tom Palmer <remlapmot@hotmail.com>
 Repository: CRAN
-Date/Publication: 2021-10-14 15:10:02 UTC
+Date/Publication: 2026-04-21 10:52:08 UTC
