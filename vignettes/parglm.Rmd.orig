@@ -1,0 +1,322 @@
+---
+title: "Introduction to the parglm package"
+author: "Benjamin Christoffersen and Tom Palmer"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to the parglm package}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE, comment = "#>", fig.width = 8, fig.height = 5,
+  dpi = 200, out.width = "100%", fig.align = "center",
+  fig.path = "img/")
+options(digits = 10)
+```
+
+The motivation for the `parglm` package is a parallel version of the `glm`
+function. It solves the iteratively re-weighted least squares using a QR
+decomposition with column pivoting with `DGEQP3` function from LAPACK.
+The computation is done in parallel as in the `bam` function in the `mgcv` package. The
+cost is an additional $O(Mp^2 + p^3)$ where $p$ is the number of
+coefficients and $M$ is the number chunks to be computed in parallel.
+The advantage is that you do not need to compile the package with
+an optimized BLAS or LAPACK which supports multithreading. The package also
+includes a method that computes the Fisher information and then solves the normal
+equation as in the `speedglm` package. This is faster but less numerically
+stable.
+
+## Example of computation time
+
+```{r set_params, echo = FALSE}
+n <- 1000000L
+p <- 50L
+n_threads <- parallel::detectCores(logical = TRUE)
+```
+
+Below, we estimate a logistic regression with `r n` observations
+and `r p` covariates. We vary the number of cores being used with the
+`nthreads` argument to `parglm.control`. The `method` argument sets which
+method is used. `LINPACK` uses the same pivoted QR (`dqrdc2`) as `glm.fit`
+for the final decomposition; `LAPACK` uses `DGEQP3` from LAPACK throughout;
+and `FAST` solves the normal equations from the Fisher information, similar
+to the `speedglm` package.
+
+```{r sim}
+#####
+# simulate
+n # number of observations
+p # number of covariates
+set.seed(68024947)
+X <- matrix(rnorm(n * p, 1/p, 1/sqrt(p)), n, ncol = p)
+df <- data.frame(y = 1/(1 + exp(-(rowSums(X) - 1))) > runif(n), X)
+```
+
+
+```{r run, cache = 1}
+#####
+# compute and measure time. Setup call to make
+library(microbenchmark)
+library(speedglm)
+library(fastglm)
+library(glm2)
+library(biglm)
+library(mgcv)
+library(parglm)
+X_mat <- model.matrix(y ~ ., df)
+biglm_form <- reformulate(names(df)[-1], response = "y")
+bam_form   <- biglm_form
+cl <- list(
+  quote(microbenchmark),
+  glm      = quote(glm     (y ~ ., binomial(), df)),
+  speedglm = quote(speedglm(y ~ ., family = binomial(), data = df)),
+  glm2     = quote(glm2    (y ~ ., binomial(), df)),
+  fastglm  = quote(fastglm (X_mat, as.numeric(df$y), family = binomial())),
+  fastglm3 = quote(fastglm (X_mat, as.numeric(df$y), family = binomial(), method = 3L)),
+  bigglm   = quote(bigglm  (biglm_form, df, family = binomial())),
+  bam      = quote(bam     (bam_form, family = binomial(), data = df)),
+  times = 11L)
+tfunc <- function(method = "LINPACK", nthreads)
+  parglm(y ~ ., binomial(), df, control = parglm.control(method = method,
+                                                         nthreads = nthreads))
+cl <- c(
+  cl, lapply(1:n_threads, function(i) bquote(tfunc(nthreads = .(i)))))
+names(cl)[10:(10L + n_threads - 1L)] <- paste0("parglm-LINPACK-", 1:n_threads)
+
+cl <- c(
+  cl, lapply(1:n_threads, function(i) bquote(tfunc(
+    nthreads = .(i), method = "FAST"))))
+names(cl)[(10L + n_threads):(10L + 2L * n_threads - 1L)] <-
+  paste0("parglm-FAST-", 1:n_threads)
+
+cl <- c(
+  cl, lapply(1:n_threads, function(i) bquote(tfunc(
+    nthreads = .(i), method = "LAPACK"))))
+names(cl)[(10L + 2L * n_threads):(10L + 3L * n_threads - 1L)] <-
+  paste0("parglm-LAPACK-", 1:n_threads)
+
+cl <- as.call(cl)
+cl # the call we make
+
+out <- eval(cl)
+```
+
+```{r show_out}
+s <- summary(out) # result from `microbenchmark`
+print(s[, c("expr", "min", "mean", "median", "max")], digits  = 3,
+      row.names	= FALSE)
+```
+
+The plot below shows median run times versus the number of cores. Coloured
+horizontal lines show the single-threaded reference times for `glm`, `speedglm`,
+`glm2`, `fastglm`, `bigglm`, and `bam`. We could have used `glm.fit` and
+`parglm.fit`. This would make the relative difference bigger as both call e.g.,
+`model.matrix` and `model.frame` which do take some time. To show this point, we
+first compute how much time this takes and then we make the plot. The black solid
+line is the computation time of `model.matrix` and `model.frame`.
+
+```{r loadmicro, echo = FALSE}
+library(microbenchmark) # in case the previous chunk is not run
+```
+
+```{r show_modmat_time, cache = 1}
+modmat_time <- microbenchmark(
+  modmat_time = {
+    mf <- model.frame(y ~ ., df); model.matrix(terms(mf), mf)
+  }, times = 10)
+modmat_time # time taken by `model.matrix` and `model.frame`
+```
+
+```{r show_run_times, fig.alt="Plot of runtime versus number of cores.", fig.cap="Plot of runtime versus number of cores."}
+par(mar = c(4.5, 4.5, .5, 9))
+o <- aggregate(time ~ expr, out, median)[, 2] / 10^9
+ylim <- range(o, 0); ylim[2] <- ylim[2] + .04 * diff(ylim)
+
+o_linpack <- o[8L:(n_threads + 7L)]
+o_fast    <- o[(n_threads + 8L):(2L * n_threads + 7L)]
+o_lapack  <- o[(2L * n_threads + 8L):(3L * n_threads + 7L)]
+
+ref_cols <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#F0E442", "#D55E00", "#CC79A7")
+ref_lty  <- c("dashed", "dotted", "dotdash", "longdash", "44", "twodash", "1373")
+
+plot(1:n_threads, o_linpack, xlab = "Number of cores", yaxs = "i",
+     ylim = ylim, ylab = "Run time (s)", pch = 16, cex = 1.4)
+points(1:n_threads, o_fast,   pch = 1, cex = 1.4, lwd = 2)
+points(1:n_threads, o_lapack, pch = 4, cex = 1.4, lwd = 2)
+for (i in 1:7)
+  abline(h = o[i], lty = ref_lty[i], col = ref_cols[i], lwd = 2)
+abline(h = median(modmat_time$time) / 10^9, lty = "solid", col = "black",
+       lwd = 2)
+usr <- par("usr")
+par(xpd = TRUE)
+legend(x = usr[2], y = usr[4], xjust = 0, yjust = 1,
+       legend = c("glm", "speedglm", "glm2", "fastglm", "fastglm (LDLT)",
+                  "bigglm", "bam", "model.matrix", "parglm LINPACK",
+                  "parglm FAST", "parglm LAPACK"),
+       lty = c(ref_lty, "solid", NA, NA, NA),
+       lwd = c(2, 2, 2, 2, 2, 2, 2, 2, NA, NA, NA),
+       col = c(ref_cols, "black", "black", "black", "black"),
+       pch = c(NA, NA, NA, NA, NA, NA, NA, NA, 16, 1, 4),
+       bty = "n")
+```
+
+The open circles are the `FAST` method and the filled circles are the `LINPACK`
+method. The `FAST` method, `speedglm`, `fastglm`, and `fastglm` (LDLT) all
+compute the Fisher information and solve the normal equation; `fastglm` (LDLT)
+uses an LDLT Cholesky decomposition (method 3) rather than the default
+column-pivoted QR (method 0).
+This is an advantage in terms of computation cost but may lead to unstable
+solutions. You can alter the number of observations in each parallel chunk
+with the `block_size` argument of `parglm.control`.
+
+The single threaded performance of `parglm` may be slower when there are more coefficients.
+The cause seems to be the difference between the LAPACK and LINPACK implementation.
+This is presumably due to either the QR decomposition method and/or the `qr.qty` method.
+On Windows, `parglm` does seem slower when built with `Rtools` and the reason
+seems to be the `qr.qty` method in LAPACK, `dormqr`, which is slower than the
+LINPACK method, `dqrsl`. Below is an illustration of the
+computation times on this machine.
+
+```{r check_qr_qty, cache = 1}
+qr1 <- qr(X)
+qr2 <- qr(X, LAPACK = TRUE)
+microbenchmark::microbenchmark(
+  `qr LINPACK`     = qr(X),
+  `qr LAPACK`      = qr(X, LAPACK = TRUE),
+  `qr.qty LINPACK` = qr.qty(qr1, df$y),
+  `qr.qty LAPACK`  = qr.qty(qr2, df$y),
+  times = 11)
+```
+
+## Smaller datasets
+
+For smaller datasets the per-call overhead of `parglm`'s thread pool can
+exceed the gains from parallelism. Below we repeat the benchmark for
+`n = 100,000` and `n = 10,000`, dropping `bam` since it is aimed at much
+larger problems. Note the default `block_size` of `parglm.control` is
+`10000`, so when `n = 10,000` the work cannot be split further across
+threads and `parglm` effectively runs single-threaded regardless of
+`nthreads`.
+
+```{r helper, echo = FALSE, cache = 1}
+run_and_plot <- function(n, p, n_threads, times = 11L, seed = 68024947) {
+  set.seed(seed)
+  X <- matrix(rnorm(n * p, 1/p, 1/sqrt(p)), n, ncol = p)
+  df <- data.frame(y = 1/(1 + exp(-(rowSums(X) - 1))) > runif(n), X)
+  X_mat <- model.matrix(y ~ ., df)
+  form  <- reformulate(names(df)[-1], response = "y")
+
+  tfunc <- function(method = "LINPACK", nthreads)
+    parglm(y ~ ., binomial(), df,
+           control = parglm.control(method = method, nthreads = nthreads))
+
+  ref_calls <- list(
+    glm          = bquote(glm     (y ~ ., binomial(), df)),
+    speedglm     = bquote(speedglm(y ~ ., family = binomial(), data = df)),
+    glm2         = bquote(glm2    (y ~ ., binomial(), df)),
+    fastglm      = bquote(fastglm (X_mat, as.numeric(df$y), family = binomial())),
+    `fastglm (LDLT)` = bquote(fastglm(X_mat, as.numeric(df$y), family = binomial(), method = 3L)),
+    bigglm       = bquote(bigglm  (form, df, family = binomial())))
+  n_ref <- length(ref_calls)
+
+  par_calls <- c(
+    setNames(lapply(1:n_threads, function(i) bquote(tfunc(nthreads = .(i)))),
+             paste0("parglm-LINPACK-", 1:n_threads)),
+    setNames(lapply(1:n_threads, function(i)
+      bquote(tfunc(nthreads = .(i), method = "FAST"))),
+      paste0("parglm-FAST-", 1:n_threads)),
+    setNames(lapply(1:n_threads, function(i)
+      bquote(tfunc(nthreads = .(i), method = "LAPACK"))),
+      paste0("parglm-LAPACK-", 1:n_threads)))
+
+  cl  <- as.call(c(list(quote(microbenchmark)), ref_calls, par_calls,
+                   list(times = times)))
+  out <- eval(cl)
+
+  modmat_time <- microbenchmark(
+    modmat_time = {
+      mf <- model.frame(y ~ ., df); model.matrix(terms(mf), mf)
+    }, times = 10)
+
+  s <- summary(out)
+  print(s[, c("expr", "min", "mean", "median", "max")], digits = 3,
+        row.names = FALSE)
+
+  o <- aggregate(time ~ expr, out, median)[, 2] / 10^9
+  ylim <- range(o, 0); ylim[2] <- ylim[2] + .04 * diff(ylim)
+
+  o_linpack <- o[(n_ref + 1L):(n_ref + n_threads)]
+  o_fast    <- o[(n_ref + n_threads + 1L):(n_ref + 2L * n_threads)]
+  o_lapack  <- o[(n_ref + 2L * n_threads + 1L):(n_ref + 3L * n_threads)]
+
+  ref_cols <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2", "#F0E442",
+                "#D55E00")[seq_len(n_ref)]
+  ref_lty  <- c("dashed", "dotted", "dotdash", "longdash", "44",
+                "twodash")[seq_len(n_ref)]
+
+  par(mar = c(4.5, 4.5, .5, 9))
+  plot(1:n_threads, o_linpack, xlab = "Number of cores", yaxs = "i",
+       ylim = ylim, ylab = "Run time (s)", pch = 16, cex = 1.4)
+  points(1:n_threads, o_fast,   pch = 1, cex = 1.4, lwd = 2)
+  points(1:n_threads, o_lapack, pch = 4, cex = 1.4, lwd = 2)
+  for (i in seq_len(n_ref))
+    abline(h = o[i], lty = ref_lty[i], col = ref_cols[i], lwd = 2)
+  abline(h = median(modmat_time$time) / 10^9, lty = "solid", col = "black",
+         lwd = 2)
+  usr <- par("usr")
+  par(xpd = TRUE)
+  legend(x = usr[2], y = usr[4], xjust = 0, yjust = 1,
+         legend = c(names(ref_calls), "model.matrix", "parglm LINPACK",
+                    "parglm FAST", "parglm LAPACK"),
+         lty = c(ref_lty, "solid", NA, NA, NA),
+         lwd = c(rep(2, n_ref + 1L), NA, NA, NA),
+         col = c(ref_cols, "black", "black", "black", "black"),
+         pch = c(rep(NA, n_ref + 1L), 16, 1, 4),
+         bty = "n")
+
+  invisible(out)
+}
+```
+
+### n = 100,000
+
+```{r run_100k, cache = 1, dependson = "helper", fig.alt="Plot of runtime versus number of cores for n = 100,000.", fig.cap="Plot of runtime versus number of cores for n = 100,000."}
+invisible(run_and_plot(n = 100000L, p = 50L, n_threads = n_threads))
+```
+
+### n = 10,000
+
+```{r run_10k, cache = 1, dependson = "helper", fig.alt="Plot of runtime versus number of cores for n = 10,000.", fig.cap="Plot of runtime versus number of cores for n = 10,000."}
+invisible(run_and_plot(n = 10000L, p = 50L, n_threads = n_threads))
+```
+
+## Varying the number of coefficients
+
+The per-row cost of each method scales roughly with $p^2$ (computing
+$X'WX$ at each IRLS iteration), while parglm's thread-pool overhead is
+roughly fixed per call. The two effects compete: with small $p$ the
+overhead dominates the parallel benefit, while with larger $p$ the
+parallel work amortizes the overhead and parglm pulls ahead. Below we
+contrast `n = 100,000, p = 5` (where the overhead wins) with
+`n = 1,000,000, p = 20` (where the parallel work wins).
+
+### n = 100,000, p = 5
+
+```{r run_100k_p5, cache = 1, dependson = "helper", fig.alt="Plot of runtime versus number of cores for n = 100,000 and p = 5.", fig.cap="Plot of runtime versus number of cores for n = 100,000 and p = 5."}
+invisible(run_and_plot(n = 100000L, p = 5L, n_threads = n_threads))
+```
+
+### n = 1,000,000, p = 20
+
+```{r run_1m_p20, cache = 1, dependson = "helper", fig.alt="Plot of runtime versus number of cores for n = 1,000,000 and p = 20.", fig.cap="Plot of runtime versus number of cores for n = 1,000,000 and p = 20."}
+invisible(run_and_plot(n = 1000000L, p = 20L, n_threads = n_threads))
+```
+
+## Session info
+
+```{r ses_info}
+sessionInfo()
+```

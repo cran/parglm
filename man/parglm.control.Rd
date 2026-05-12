@@ -8,9 +8,10 @@ parglm.control(
   epsilon = 1e-08,
   maxit = 25,
   trace = FALSE,
-  nthreads = 1L,
+  nthreads = parallelly::availableCores(omit = 1L),
   block_size = NULL,
-  method = "LINPACK"
+  method = "LINPACK",
+  nthreads_auto = missing(nthreads)
 )
 }
 \arguments{
@@ -20,15 +21,19 @@ parglm.control(
 
 \item{trace}{logical indicating if output should be produced doing estimation.}
 
-\item{nthreads}{number of cores to use. You may get the best performance by
-using your number of physical cores if your data set is sufficiently large.
-Using the number of physical CPUs/cores may yield the best performance
-(check your number e.g., by calling \code{parallel::detectCores(logical = FALSE)}).}
+\item{nthreads}{number of cores to use. Defaults to
+\code{parallelly::availableCores(omit = 1L)}, which leaves one core free.
+You may get the best performance by using all available physical cores if
+your data set is sufficiently large.}
 
-\item{block_size}{number of observation to include in each parallel block.}
+\item{block_size}{number of observations to include in each parallel block.}
 
 \item{method}{string specifying which method to use. Either \code{"LINPACK"},
 \code{"LAPACK"}, or \code{"FAST"}.}
+
+\item{nthreads_auto}{logical; for internal use only. Records whether
+\code{nthreads} was auto-detected (suppresses the thread-reduction warning
+when the dataset is small). Do not set this argument directly.}
 }
 \value{
 A list with components named as the arguments.

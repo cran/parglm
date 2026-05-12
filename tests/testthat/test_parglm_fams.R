@@ -1,4 +1,4 @@
-context("testing results with varrious link functions agianst `glm.fit`")
+context("testing results with various link functions agianst `glm.fit`")
 
 to_check <- c(
   "coefficients", "residuals", "fitted.values", "rank",
@@ -40,10 +40,22 @@ sim_func <- function(family, n, p){
     X <- abs(X)
     y <- rgamma(n, shape = 1, rate = 1 / family$linkinv(rowSums(X) + inter))
 
-  }  else if(nam %in% c("poissonlog", "poissonidentity", "poissonsqrt")){
+  }  else if(nam %in% c("poissonlog", "poissonidentity", "poissonsqrt",
+                        "quasipoissonlog", "quasipoissonidentity", "quasipoissonsqrt")){
     inter <- 1.5
     X <- abs(X)
     y <- rpois(n, family$linkinv(rowSums(X) + inter))
+
+  } else if(nam %in% c("quasibinomiallogit", "quasibinomialprobit",
+                        "quasibinomialcauchit", "quasibinomialcloglog")){
+    inter <- 1.
+    y <- family$linkinv(rowSums(X) + inter) > runif(n)
+
+  } else if(nam %in% "quasibinomiallog"){
+    inter <- -.5
+    X <- -abs(X)
+    X <- X * .25 / diff(range(rowSums(X)))
+    y <- family$linkinv(rowSums(X) + inter) > runif(n)
 
   } else if(nam %in% c("inverse.gaussian1/mu^2", "inverse.gaussianinverse",
                        "inverse.gaussianidentity", "inverse.gaussianlog")){
@@ -231,7 +243,7 @@ test_that("'method' equal to 'LINPACK' behaves as 'glm'", {
   parglm_control <- parglm.control(
     nthreads = 2, maxit = 25L,
     epsilon = .Machine$double.xmin, method = "LINPACK")
-  f1 <- glm(y ~ X, control = glm_control)
+  f1 <- suppressWarnings(glm(y ~ X, control = glm_control))
   f2 <- parglm(y ~ X, control = parglm_control)
 
   expect_equal(f1[to_check], f2[to_check])
@@ -301,13 +313,87 @@ test_that("'stop's when there are more variables than observations", {
 
   # check that it works with same number of observations as variables
   dframe <- dframe[, 1:n]
-  fpar <- parglm(y ~ ., gaussian(), dframe, nthreads = 2)
+  fpar <- parglm(y ~ ., gaussian(), dframe, nthreads = 1L)
   fglm <-    glm(y ~ ., gaussian(), dframe)
   expect_equal(coef(fpar), coef(fglm))
 
   # and with almost the same number of variables as observations
   dframe <- dframe[, 1:(n - 3L)]
-  fpar <- parglm(y ~ ., gaussian(), dframe, nthreads = 2)
+  fpar <- parglm(y ~ ., gaussian(), dframe, nthreads = 1L)
   fglm <-    glm(y ~ ., gaussian(), dframe)
   expect_equal(coef(fpar), coef(fglm))
+})
+
+test_that("works with two-column binomial response", {
+  set.seed(42)
+  n <- 500L
+  x1 <- rnorm(n)
+  x2 <- rnorm(n)
+  trials <- sample(1:20, n, replace = TRUE)
+  p <- plogis(0.5 + 0.3 * x1 - 0.2 * x2)
+  successes <- rbinom(n, trials, p)
+  dat <- data.frame(successes = successes, failures = trials - successes,
+                    x1 = x1, x2 = x2)
+
+  glm_control    <- list(maxit = 25L, epsilon = .Machine$double.xmin)
+
+  for (method in c("LAPACK", "LINPACK", "FAST")) {
+    tol <- if(method == "FAST") .Machine$double.eps^(1/5) else
+      .Machine$double.eps^(1/4)
+    parglm_control <- parglm.control(
+      nthreads = 1L, method = method, maxit = 25L,
+      epsilon = .Machine$double.xmin)
+    lab <- paste0("two-col binomial_", method)
+
+    suppressWarnings({
+      f1 <- glm(cbind(successes, failures) ~ x1 + x2, binomial(), dat,
+                control = glm_control)
+      f2 <- parglm(cbind(successes, failures) ~ x1 + x2, binomial(), dat,
+                   control = parglm_control)
+    })
+
+    expect_equal(f1[to_check], f2[to_check], label = lab, tolerance = tol)
+  }
+
+  # quasibinomial with two-column response
+  suppressWarnings({
+    f1 <- glm(cbind(successes, failures) ~ x1 + x2, quasibinomial(), dat,
+              control = glm_control)
+    f2 <- parglm(cbind(successes, failures) ~ x1 + x2, quasibinomial(), dat,
+                 control = parglm.control(nthreads = 1L, maxit = 25L,
+                                          epsilon = .Machine$double.xmin))
+  })
+  expect_equal(f1[to_check], f2[to_check],
+               label = "two-col quasibinomial", tolerance = .Machine$double.eps^(1/4))
+})
+
+test_that("works with quasibinomial and quasipoisson families", {
+  n <- 500L
+  p <- 2L
+  for(method in c("LAPACK", "LINPACK", "FAST"))
+  for(fa in list(
+    quasibinomial("logit"), quasibinomial("probit"), quasibinomial("cloglog"),
+    quasipoisson("log"), quasipoisson("sqrt")))
+  {
+    tmp <- sim_func(fa, n, p)
+    df <- data.frame(y = tmp$y, tmp$X)
+
+    lab <- paste0(fa$family, "_", fa$link, "_", method)
+    tol <- if(method == "FAST") .Machine$double.eps^(1/5) else
+      .Machine$double.eps^(1/4)
+    frm <- y ~ X1 + X2
+    glm_control    <- list(maxit = 25L, epsilon = .Machine$double.xmin)
+    parglm_control <- parglm.control(
+      nthreads = 2L, method = method, maxit = 25L,
+      epsilon = .Machine$double.xmin)
+    suppressWarnings({
+      f1 <- glm(frm, family = fa, data = df, control = glm_control)
+      f2 <- parglm(frm, family = fa, data = df, control = parglm_control)
+    })
+
+    expect_equal(f1[to_check], f2[to_check], label = lab, tolerance = tol)
+    expect_true(is.na(f2$aic), label = paste(lab, "AIC is NA"))
+    expect_equal(summary(f1)$dispersion, summary(f2)$dispersion,
+                 label = paste(lab, "dispersion"), tolerance = tol)
+  }
 })

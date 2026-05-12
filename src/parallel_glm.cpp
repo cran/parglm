@@ -23,6 +23,8 @@ inline size_t floor_mult(size_t const num, size_t const denom){
 class data_holder_base {
 public:
   arma::vec *beta;
+  arma::vec beta_clean; /* NA-zeroed copy of beta; populated on the main
+                         * thread before dispatching workers              */
 
   /* These are not const but should not be changed... */
   arma::mat &X;
@@ -40,6 +42,7 @@ public:
     arma::mat &X, arma::vec &Ys, arma::vec &weights, arma::vec &offsets,
     const arma::uword max_threads, const arma::uword p, const arma::uword n,
     const glm_base &family, arma::uword b_size = 10000):
+    beta_clean(p),
     X(X), Ys(Ys), weights(weights), offsets(offsets), eta(Ys.n_elem),
     mu(Ys.n_elem),
     max_threads(max_threads), p(p), n(n), family(std::move(family)),
@@ -54,24 +57,14 @@ struct parallelglm_res {
   const arma::uword n_iter;
   const bool conv;
   const arma::uword rank;
+  const arma::vec eta;
+  const arma::vec mu;
 };
 
 const double double_one = 1., double_zero = 0.;
 const int int_one = 1;
 char char_N = 'N', char_U = 'U', char_T = 'T';
 
-inline void inplace_copy
-  (arma::mat &X, const arma::mat &Y, const arma::uword start,
-   const arma::uword end)
-  {
-    double *x = X.begin();
-    const double *y = Y.begin() + start;
-
-    size_t const n_ele = end - start + 1L;
-    for(unsigned int i = 0; i < X.n_cols;
-        ++i, x += X.n_rows, y += Y.n_rows)
-      std::memcpy(x, y, n_ele * sizeof(double));
-  }
 
 namespace {
 constexpr size_t const max_wk_mem_keep = 10000000L / sizeof(double);
@@ -180,17 +173,23 @@ class parallelglm_class_QR {
 
       const arma::uword p = data.X.n_cols;
       arma::mat X(get_wk_mem(n * p), n, p, false, true);
-      inplace_copy(X, data.X, i_start, i_end);
-      X.each_col() %= w;
+      /* Fused copy-and-scale: one memory pass instead of memcpy + DSCAL. */
+      for(arma::uword j = 0; j < p; ++j){
+        const double *src = data.X.colptr(j) + i_start;
+        double       *dst = X.colptr(j);
+        for(arma::uword i = 0; i < n; ++i)
+          dst[i] = src[i] * w[i];
+      }
       z %= w;
 
       arma::mat dev_mat(1L, 1L, arma::fill::zeros); /* we compute this later */
 
       if(do_inner){
-        /* do not need to initalize when beta is zero. We do it anyway as we
-         * later perform an addition for all elements */
+        /* dsyrk writes only the upper triangle; the consumer in get_inner
+         * sums upper-only and symmetrises at the end, so the lower triangle
+         * does not need to be initialised here */
         int dsryk_n = X.n_cols, k = X.n_rows;
-        arma::mat C(dsryk_n, dsryk_n, arma::fill::zeros);
+        arma::mat C(dsryk_n, dsryk_n, arma::fill::none);
 
         R_BLAS_LAPACK::dsyrk(
           &char_U /*uplo*/, &char_T /*trans*/, &dsryk_n, &k /*k*/,
@@ -243,20 +242,14 @@ class parallelglm_class_QR {
       if(first_it)
         data.family.initialize(eta, y, weight);
       else {
-        /* change `NA`s to zero */
-        arma::vec coef = *data.beta;
-        for(auto c = coef.begin(); c != coef.end(); ++c)
-          if(ISNA(*c))
-            *c = 0.;
-
         std::memcpy(eta.begin(), offset.begin(), sizeof(double) * n);
 
-        int n_i = n, p = coef.n_elem, N = data.X.n_rows;
+        int n_i = n, p = data.beta_clean.n_elem, N = data.X.n_rows;
         R_BLAS_LAPACK::dgemv(
           &char_N, &n_i /*m*/, &p /*n*/, &double_one /*alpha*/,
           data.X.memptr() + i_start /*A*/, &N /*LDA*/,
-          coef.memptr() /*X*/, &int_one /*incx*/, &double_one /*beta*/,
-          eta.memptr() /*Y*/, &int_one /*incy*/);
+          data.beta_clean.memptr() /*X*/, &int_one /*incx*/,
+          &double_one /*beta*/, eta.memptr() /*Y*/, &int_one /*incy*/);
       }
 
       data.family.linkinv(mu, eta);
@@ -267,6 +260,16 @@ class parallelglm_class_QR {
 
   static double set_eta_n_mu(data_holder_base &data, bool first_it,
                              qr_parallel &pool, const bool use_start){
+    /* Workers take the dgemv branch unless first_it && !use_start; populate
+     * the NA-zeroed beta once here so each chunk does not have to. */
+    bool const workers_use_beta = !first_it or use_start;
+    if(workers_use_beta){
+      data.beta_clean = *data.beta;
+      for(auto c = data.beta_clean.begin(); c != data.beta_clean.end(); ++c)
+        if(ISNA(*c))
+          *c = 0.;
+    }
+
     std::vector<std::future<double> > futures;
     uword n = data.X.n_rows, i_start = 0, i_end = 0.;
 
@@ -346,14 +349,20 @@ class parallelglm_class_QR {
       auto o = f.get();
 
       if(is_first){
-        out.C = o.X;
-        out.c = o.Y;
+        out.C.zeros(o.X.n_rows, o.X.n_cols);
+        out.c.zeros(o.Y.n_rows, o.Y.n_cols);
         is_first = false;
-        continue;
       }
 
-      /* TODO: could just take the upper part */
-      out.C += o.X;
+      /* o.X has only its upper triangle populated by dsyrk; sum upper-only
+       * here and symmetrise once at the end */
+      arma::uword const p = o.X.n_cols;
+      for(arma::uword j = 0; j < p; ++j){
+        double const * src = o.X.colptr(j);
+        double       * dst = out.C.colptr(j);
+        for(arma::uword i = 0; i <= j; ++i)
+          dst[i] += src[i];
+      }
       out.c += o.Y;
     }
 
@@ -390,8 +399,9 @@ public:
     arma::uword i, rank = 0L;
     double dev = 0.;
     std::unique_ptr<R_F> R_f_out;
+    thread_pool th_pool(data.max_threads);
     qr_parallel pool(std::vector<std::unique_ptr<qr_data_generator>>(),
-                     data.max_threads);
+                     th_pool);
     for(i = 0; i < it_max; ++i){
       arma::vec beta_old = beta;
 
@@ -401,21 +411,34 @@ public:
       if(method == "LAPACK"){
         R_f_out.reset(new R_F(get_R_f(data, pool)));
 
-        /* TODO: can maybe done smarter using that R is triangular befor
-         *       permutation */
-        arma::mat R = R_f_out->R_rev_piv();
-        beta = arma::solve(R.t(), R.t() * R_f_out->F.col(0),
-                           arma::solve_opts::no_approx);
-        beta = arma::solve(R    , beta,
-                           arma::solve_opts::no_approx);
-        rank = beta.n_elem;
+        const arma::uword p = R_f_out->R.n_rows;
+        const double rank_tol =
+          std::min(1e-07, tol / 1000) * std::abs(R_f_out->R(0, 0));
+        arma::uword p_rank = p;
+        for(arma::uword j = 0; j < p; ++j){
+          if(std::abs(R_f_out->R(j, j)) <= rank_tol){
+            p_rank = j;
+            break;
+          }
+        }
+        rank = p_rank;
+
+        beta.fill(NA_REAL);
+        if(p_rank > 0){
+          arma::mat R_sub = arma::trimatu(
+            R_f_out->R.submat(0, 0, p_rank - 1, p_rank - 1));
+          arma::vec gamma = R_f_out->F.col(0).head(p_rank);
+          gamma = arma::solve(R_sub, gamma);
+          for(arma::uword j = 0; j < p_rank; ++j)
+            beta[R_f_out->pivot[j]] = gamma[j];
+        }
 
       } else if(method == "LINPACK"){
         auto o = get_dqrls_res(data, pool, std::min(1e-07, tol / 1000));
-        R_f_out.reset(new R_F(std::move(o.R_F)));
         for(arma::uword i = 0; i < o.R_F.pivot.n_elem; ++i)
           beta[o.R_F.pivot[i]] = o.coefficients[i];
         rank = o.rank;
+        R_f_out.reset(new R_F(std::move(o.R_F)));
 
       } else if(method == "FAST"){
         auto o = get_inner(data, pool);
@@ -453,7 +476,7 @@ public:
 
     return { beta, *R_f_out.get(), dev,
              std::min(static_cast<arma::uword>(i + 1L), it_max),
-             i < it_max, rank };
+             i < it_max, rank, data.eta, data.mu };
   }
 };
 
@@ -492,5 +515,8 @@ Rcpp::List parallelglm(
 
     Rcpp::Named("n_iter") = result.n_iter,
     Rcpp::Named("conv")   = result.conv,
-    Rcpp::Named("rank")   = result.rank);
+    Rcpp::Named("rank")   = result.rank,
+
+    Rcpp::Named("eta")    = Rcpp::wrap(result.eta),
+    Rcpp::Named("mu")     = Rcpp::wrap(result.mu));
 }

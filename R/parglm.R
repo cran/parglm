@@ -48,12 +48,18 @@ NULL
 #'
 #' @details
 #' The current implementation uses \code{min(as.integer(n / p), nthreads)}
-#' threads where \code{n} is the number observations, \code{p} is the
+#' threads where \code{n} is the number of observations, \code{p} is the
 #' number of covariates, and \code{nthreads} is the \code{nthreads} element of
 #' the list
 #' returned by \code{\link{parglm.control}}. Thus, there is likely little (if
 #' any) reduction in computation time if \code{p} is almost equal to \code{n}.
 #' The current implementation cannot handle \code{p > n}.
+#'
+#' Since \code{parglm} returns a standard \code{\link{glm}} object, it is
+#' compatible with the \pkg{sandwich} package for heteroskedasticity-consistent
+#' (HC) and cluster-robust standard errors via \code{\link[sandwich]{vcovHC}}
+#' and \code{\link[sandwich]{vcovCL}}. This requires \code{model = TRUE}
+#' (the default). See \code{vignette("sandwich", "parglm")} for examples.
 #'
 #' @examples
 #' # mtcars has 32 rows, sufficient for 2 threads (>= 16 rows per thread)
@@ -84,13 +90,16 @@ parglm <- function(
 #' @param epsilon positive convergence tolerance.
 #' @param maxit integer giving the maximal number of IWLS iterations.
 #' @param trace logical indicating if output should be produced doing estimation.
-#' @param nthreads number of cores to use. You may get the best performance by
-#' using your number of physical cores if your data set is sufficiently large.
-#' Using the number of physical CPUs/cores may yield the best performance
-#' (check your number e.g., by calling \code{parallel::detectCores(logical = FALSE)}).
-#' @param block_size number of observation to include in each parallel block.
+#' @param nthreads number of cores to use. Defaults to
+#' \code{parallelly::availableCores(omit = 1L)}, which leaves one core free.
+#' You may get the best performance by using all available physical cores if
+#' your data set is sufficiently large.
+#' @param block_size number of observations to include in each parallel block.
 #' @param method string specifying which method to use. Either \code{"LINPACK"},
 #' \code{"LAPACK"}, or \code{"FAST"}.
+#' @param nthreads_auto logical; for internal use only. Records whether
+#' \code{nthreads} was auto-detected (suppresses the thread-reduction warning
+#' when the dataset is small). Do not set this argument directly.
 #'
 #' @details
 #' The \code{LINPACK} method uses the same QR method as \code{\link{glm.fit}} for the final QR decomposition.
@@ -121,8 +130,10 @@ parglm <- function(
 #'
 #' @export
 parglm.control <- function(
-  epsilon = 1e-08, maxit = 25, trace = FALSE, nthreads = 1L,
-  block_size = NULL, method = "LINPACK")
+  epsilon = 1e-08, maxit = 25, trace = FALSE,
+  nthreads = parallelly::availableCores(omit = 1L),
+  block_size = NULL, method = "LINPACK",
+  nthreads_auto = missing(nthreads))
 {
   if (!is.numeric(epsilon) || epsilon <= 0)
     stop("value of 'epsilon' must be > 0")
@@ -133,18 +144,18 @@ parglm.control <- function(
     is.null(block_size) || (is.numeric(block_size) && block_size >= 1),
     method %in% c("LAPACK", "LINPACK", "FAST"))
   list(epsilon = epsilon, maxit = maxit, trace = trace, nthreads = nthreads,
-       block_size = block_size, method = method)
+       nthreads_auto = nthreads_auto, block_size = block_size, method = method)
 }
 
 #' @rdname parglm
-#' @importFrom stats gaussian binomial Gamma inverse.gaussian poisson
+#' @importFrom stats gaussian binomial Gamma inverse.gaussian poisson quasipoisson quasibinomial weighted.mean
 #' @export
 parglm.fit <- function(
   x, y, weights = rep(1, NROW(x)), start = NULL, etastart = NULL,
   mustart = NULL, offset = rep(0, NROW(x)), family = gaussian(),
   control = list(), intercept = TRUE, ...){
   .check_fam(family)
-  stopifnot(nrow(x) == length(y))
+  stopifnot(nrow(x) == NROW(y))
   if(NCOL(x) > NROW(x))
     stop("not implemented with more variables than observations")
 
@@ -159,6 +170,15 @@ parglm.fit <- function(
   x <- as.matrix(x)
   xnames <- dimnames(x)[[2L]]
   ynames <- if(is.matrix(y)) rownames(y) else names(y)
+
+  n_trials <- rep(1, NROW(y))
+  if(NCOL(y) == 2L && family$family %in% c("binomial", "quasibinomial")) {
+    n_trials <- y[, 1L] + y[, 2L]
+    y        <- ifelse(n_trials == 0, 0, y[, 1L] / n_trials)
+    weights  <- if(is.null(weights)) n_trials else weights * n_trials
+  } else if(NCOL(y) > 1L)
+    stop("Multi column ", sQuote("y"), " is not supported")
+
   conv <- FALSE
   nobs <- NROW(y)
   nvars <- ncol(x)
@@ -166,8 +186,6 @@ parglm.fit <- function(
 
   if(EMPTY)
     stop("not implemented for empty model")
-  if(NCOL(y) > 1L)
-    stop("Multi column ", sQuote("y"), " is not supported")
 
   if (is.null(weights))
     weights <- rep.int(1, nobs)
@@ -181,9 +199,9 @@ parglm.fit <- function(
     if(nthreads_new < 1L)
       nthreads_new <- 1L
 
-    if(control$nthreads != nthreads_new)
+    if(control$nthreads != nthreads_new && !isTRUE(control$nthreads_auto))
       warning(
-        "Too few observation compared to the number of threads. ",
+        "Too few observations compared to the number of threads. ",
         nthreads_new, " thread(s) will be used instead of ",
         control$nthreads, ".")
 
@@ -198,6 +216,29 @@ parglm.fit <- function(
   block_size <- max(block_size, NCOL(x))
 
   use_start <- !is.null(start)
+
+  # Families whose C++ initialize() requires strictly positive y. When any y
+  # is non-positive or non-finite, compute a safe starting beta from the valid
+  # observations and warn rather than stop, matching glm()/fastglm() behaviour.
+  if (!use_start) {
+    fam_key <- paste0(family$family, "_", family$link)
+    needs_pos_y <- fam_key %in% c(
+      "gaussian_log", "gaussian_inverse",
+      "Gamma_inverse", "Gamma_identity", "Gamma_log",
+      "inverse.gaussian_1/mu^2", "inverse.gaussian_inverse",
+      "inverse.gaussian_identity", "inverse.gaussian_log")
+    if (needs_pos_y && any(!is.finite(y) | y <= 0)) {
+      warning("cannot find valid starting values: using default starting value",
+              call. = FALSE)
+      y_ok <- is.finite(y) & y > 0
+      mu0  <- if (any(y_ok)) weighted.mean(y[y_ok], weights[y_ok]) else 1
+      eta0 <- family$linkfun(mu0)
+      start     <- rep(0, ncol(x))
+      start[1L] <- eta0
+      use_start <- TRUE
+    }
+  }
+
   fit <- parallelglm(
     X = x, Ys = y, family = paste0(family$family, "_", family$link),
     start = if(use_start) start else numeric(ncol(x)), weights = weights,
@@ -209,10 +250,8 @@ parglm.fit <- function(
   # compute objects as in `glm.fit`
   coef <- drop(fit$coefficients)
   names(coef) <- xnames
-  coef_dot <- ifelse(is.na(coef), 0, coef)
-  eta <- drop(x %*% coef_dot) + offset
-  good <- weights > 0
-  mu <- family$linkinv(eta)
+  eta <- drop(fit$eta)
+  mu  <- drop(fit$mu)
   mu.eta.val <- family$mu.eta(eta)
   good <- (weights > 0) & (mu.eta.val != 0)
   w <- sqrt((weights[good] * mu.eta.val[good]^2) / family$variance(mu)[good])
@@ -222,7 +261,7 @@ parglm.fit <- function(
 
   residuals <- (y - mu) / mu.eta.val
 
-  dev <- drop(fit$dev) # should mabye re-compute...
+  dev <- sum(family$dev.resids(y, mu, weights))
 
   conv <- fit$conv
   iter <- fit$n_iter
@@ -256,11 +295,8 @@ parglm.fit <- function(
   rank <- fit$rank
   resdf  <- n.ok - rank
   #-----------------------------------------------------------------------------
-  # calculate AIC
-  # we need to initialize n if the family is `binomial`. As of 11/11/2018 two
-  # column ys are not allowed so this is easy
-  n <- rep(1, nobs)
-  aic.model <- family$aic(y, n, mu, weights, dev) + 2*rank
+  # calculate AIC; n_trials is 1 for single-column y, trial counts for two-column binomial
+  aic.model <- family$aic(y, n_trials, mu, weights, dev) + 2*rank
   #-----------------------------------------------------------------------------
   list(coefficients = coef, residuals = residuals, fitted.values = mu,
        # effects = fit$effects, # TODO: add
@@ -270,15 +306,55 @@ parglm.fit <- function(
        linear.predictors = eta, deviance = dev, aic = aic.model,
        null.deviance = nulldev, iter = iter, weights = wt,
        prior.weights = weights, df.residual = resdf, df.null = nulldf,
-       y = y, converged = conv, boundary = boundary)
+       y = y, converged = conv, boundary = boundary,
+       class = "parglm")
 }
 
+
+#' @importFrom stats coef hatvalues model.matrix summary.glm vcov
+#' @export
+summary.parglm <- function(object, ...) {
+  s   <- NextMethod()
+  rnk <- object$rank
+  pvt <- object$qr$pivot[seq_len(rnk)]
+  idx <- order(pvt)
+  if (!identical(idx, seq_len(rnk))) {
+    s$coefficients <- s$coefficients[idx, , drop = FALSE]
+    s$cov.unscaled <- s$cov.unscaled[idx, idx, drop = FALSE]
+    if (!is.null(s$cov.scaled))
+      s$cov.scaled <- s$cov.scaled[idx, idx, drop = FALSE]
+  }
+  s
+}
+
+#' @export
+vcov.parglm <- function(object, complete = TRUE, ...) {
+  s   <- summary(object, ...)
+  cf0 <- coef(object)
+  p   <- length(cf0)
+  cf  <- !is.na(cf0)
+  vc  <- matrix(NA_real_, p, p, dimnames = list(names(cf0), names(cf0)))
+  if (any(cf))
+    vc[cf, cf] <- s$dispersion * s$cov.unscaled
+  if (complete) vc else vc[cf, cf, drop = FALSE]
+}
+
+#' @export
+hatvalues.parglm <- function(model, ...) {
+  wts <- model$weights
+  X   <- model.matrix(model)
+  pvt <- model$qr$pivot
+  rnk <- model$rank
+  Xw  <- X[, pvt[seq_len(rnk)], drop = FALSE] * sqrt(wts)
+  R   <- model$R[seq_len(rnk), seq_len(rnk), drop = FALSE]
+  Z   <- forwardsolve(t(R), t(Xw))
+  colSums(Z^2)
+}
 
 .check_fam <- function(family){
   stopifnot(
     inherits(family, "family"),
-    paste(family$family, family$link) %in%
-      sapply(parglm_supported(), function(x) paste(x$family, x$link)))
+    paste(family$family, family$link) %in% .parglm_supported_keys())
 }
 
 parglm_supported <- function()
@@ -292,8 +368,32 @@ parglm_supported <- function()
 
     poisson("log"), poisson("identity"), poisson("sqrt"),
 
+    quasipoisson("log"), quasipoisson("identity"), quasipoisson("sqrt"),
+
+    quasibinomial("logit"), quasibinomial("probit"), quasibinomial("cauchit"),
+    quasibinomial("log"), quasibinomial("cloglog"),
+
     inverse.gaussian("1/mu^2"), inverse.gaussian("inverse"),
     inverse.gaussian("identity"), inverse.gaussian("log"))
+
+.parglm_supported_keys <- local({
+  cached <- NULL
+  function() {
+    if (is.null(cached))
+      cached <<- vapply(
+        parglm_supported(),
+        function(x) paste(x$family, x$link),
+        character(1))
+    cached
+  }
+})
+
+#' @export
+confint.parglm <- function(object, parm, level = 0.95, ...) {
+  keep <- intersect(names(object$control), c("epsilon", "maxit", "trace"))
+  object$control <- object$control[keep]
+  NextMethod()
+}
 
 #' @importFrom Matrix qr.R
 #' @export

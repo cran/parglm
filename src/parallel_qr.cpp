@@ -36,9 +36,10 @@ void set_p_qr_working_memory(size_t const max_m, size_t const max_n,
 }
 
 arma::mat R_F::R_rev_piv() const {
-  arma::uvec piv = pivot;
-  piv(piv) = arma::regspace<arma::uvec>(0, 1, piv.n_elem - 1);
-  return R.cols(piv);
+  arma::mat result(R.n_rows, R.n_cols, arma::fill::none);
+  for(arma::uword j = 0; j < R.n_cols; ++j)
+    result.col(pivot[j]) = R.col(j);
+  return result;
 }
 
 qr_parallel::worker::worker
@@ -57,9 +58,8 @@ R_F qr_parallel::worker::operator()(){
 }
 
 qr_parallel::qr_parallel(
-  ptr_vec generators, const unsigned int max_threads):
-  n_threads(std::max(static_cast<unsigned>(1L), max_threads)),
-  futures(), th_pool(n_threads)
+  ptr_vec generators, thread_pool &pool):
+  futures(), th_pool(pool)
   {
     while(!generators.empty()){
       submit(std::move(generators.back()));
@@ -74,47 +74,44 @@ void qr_parallel::submit(std::unique_ptr<qr_data_generator> generator){
 qr_parallel::get_stacks_res_obj qr_parallel::get_stacks_res(){
   get_stacks_res_obj out;
 
-  bool is_first = true;
   arma::mat &R_stack = out.R_stack;
   arma::mat &F_stack = out.F_stack;
   arma::mat &dev     = out.dev;
-  arma::uword &p = out.p, q = 0L, i = 0L;
+  arma::uword &p = out.p;
   p = 0L;
+  arma::uword q = 0L, i = 0L;
 
-  arma::uword num_blocks = futures.size();
-  while(!futures.empty()){
-    auto f = futures.begin();
+  arma::uword const num_blocks = futures.size();
+  bool is_first = true;
+  for(auto &fut : futures){
+    R_F R_Fs_i = fut.get();
+    if(is_first){
+      p = R_Fs_i.R.n_rows;
+      q = R_Fs_i.F.n_rows;
 
-    /* we assume that the first tasks are done first */
-    for(arma::uword j = 0; f != futures.end() and j < n_threads; ++j, ++f){
-      if(f->wait_for(std::chrono::microseconds(1)) ==
-         std::future_status::ready){
-        R_F R_Fs_i = f->get();
-        if(is_first){
-          p = R_Fs_i.R.n_rows;
-          q = R_Fs_i.F.n_rows;
+      R_stack.set_size(p * num_blocks, p);
+      F_stack.set_size(q * num_blocks, R_Fs_i.F.n_cols);
 
-          R_stack.set_size(p * num_blocks, p);
-          F_stack.set_size(q * num_blocks, R_Fs_i.F.n_cols);
+      dev = R_Fs_i.dev;
+      is_first = false;
 
-          dev = R_Fs_i.dev;
-          is_first = false;
+    } else
+      dev += R_Fs_i.dev;
 
-        } else
-          dev += R_Fs_i.dev;
-
-        R_stack.rows(i * p, (i + 1L) * p - 1L) = R_Fs_i.R_rev_piv();
-        F_stack.rows(i * q, (i + 1L) * q - 1L) = std::move(R_Fs_i.F);
-
-        ++i;
-        futures.erase(f);
-        break;
-      }
+    /* write each chunk column directly into R_stack at the position
+     * given by the forward pivot, avoiding an intermediate p-by-p copy */
+    for(arma::uword j = 0; j < R_Fs_i.R.n_cols; ++j){
+      arma::uword const dst_col = R_Fs_i.pivot[j];
+      R_stack.submat(i * p, dst_col, (i + 1L) * p - 1L, dst_col) =
+        R_Fs_i.R.col(j);
     }
+    F_stack.rows(i * q, (i + 1L) * q - 1L) = std::move(R_Fs_i.F);
+
+    ++i;
   }
+  futures.clear();
 
   return out;
-
 }
 
 R_F qr_parallel::compute(){

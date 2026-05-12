@@ -1,6 +1,6 @@
 Package: parglm
 Title: Parallel GLM
-Version: 0.1.8
+Version: 0.1.9
 Authors@R: c(
     person("Benjamin", "Christoffersen", , "boennecd@gmail.com", role = "aut",
            comment = c(ORCID = "0000-0002-7182-1346")),
@@ -15,15 +15,16 @@ License: GPL-2
 URL: https://github.com/remlapmot/parglm,
         https://remlapmot.github.io/parglm/
 BugReports: https://github.com/remlapmot/parglm/issues
-Imports: Matrix, Rcpp
-Suggests: knitr, microbenchmark, R.rsp, rmarkdown, speedglm, SuppDists,
-        testthat
+Imports: Matrix, parallelly, Rcpp
+Suggests: biglm, broom, broom.helpers, fastglm, glm2, gtsummary, knitr,
+        lmtest, microbenchmark, rmarkdown, sandwich, speedglm,
+        SuppDists, testthat
 LinkingTo: Rcpp, RcppArmadillo
-VignetteBuilder: R.rsp
+VignetteBuilder: knitr
+Config/roxygen2/version: 8.0.0
 Encoding: UTF-8
-RoxygenNote: 7.3.3
 NeedsCompilation: yes
-Packaged: 2026-04-19 03:16:00 UTC; tom
+Packaged: 2026-05-12 13:00:29 UTC; eptmp
 Author: Benjamin Christoffersen [aut] (ORCID:
     <https://orcid.org/0000-0002-7182-1346>),
   Anthony Williams [cph],
@@ -31,4 +32,4 @@ Author: Benjamin Christoffersen [aut] (ORCID:
   Tom Palmer [aut, cre] (ORCID: <https://orcid.org/0000-0003-4655-4511>)
 Maintainer: Tom Palmer <remlapmot@hotmail.com>
 Repository: CRAN
-Date/Publication: 2026-04-21 10:52:08 UTC
+Date/Publication: 2026-05-12 13:20:02 UTC
