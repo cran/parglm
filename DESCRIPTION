@@ -1,6 +1,6 @@
 Package: parglm
 Title: Parallel GLM
-Version: 0.1.9
+Version: 0.1.9-1
 Authors@R: c(
     person("Benjamin", "Christoffersen", , "boennecd@gmail.com", role = "aut",
            comment = c(ORCID = "0000-0002-7182-1346")),
@@ -24,7 +24,7 @@ VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
 Encoding: UTF-8
 NeedsCompilation: yes
-Packaged: 2026-05-12 13:00:29 UTC; eptmp
+Packaged: 2026-05-14 14:40:13 UTC; tom
 Author: Benjamin Christoffersen [aut] (ORCID:
     <https://orcid.org/0000-0002-7182-1346>),
   Anthony Williams [cph],
@@ -32,4 +32,4 @@ Author: Benjamin Christoffersen [aut] (ORCID:
   Tom Palmer [aut, cre] (ORCID: <https://orcid.org/0000-0003-4655-4511>)
 Maintainer: Tom Palmer <remlapmot@hotmail.com>
 Repository: CRAN
-Date/Publication: 2026-05-12 13:20:02 UTC
+Date/Publication: 2026-05-14 15:00:02 UTC
