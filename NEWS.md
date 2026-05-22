@@ -1,3 +1,10 @@
+# parglm 0.1.10
+
+* Fix a few minor grammar errors in the documentation.
+* Add missing <vector> include to fix build on MacOSX11.3.1 SDK.
+* Fix thread_pool.h includes: add missing, remove unused, alphabetise.
+* Ensure tests use a maximum of 2 cores due to CRAN requirement.
+
 # parglm 0.1.9-1
 
 * Add missing `<thread>` include to fix build on older Apple SDKs.
